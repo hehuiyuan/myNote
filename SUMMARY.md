@@ -4,6 +4,6 @@
 
 ## hbase
 
-* [hbase之coprocessor](hbase/untitled.md)
-* [hbase之架构](hbase/hbase-zhi-jia-gou.md)
+* [hbase之coprocessor](hbase/hbase-coprocessor.md)
+* [hbase之架构](hbase/hbase-frame.md)
 
