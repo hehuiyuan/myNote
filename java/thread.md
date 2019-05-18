@@ -1,8 +1,8 @@
 # thread
 
-## [JAVA多线程实现的四种方式](https://www.cnblogs.com/felixzh/p/6036074.html)
+## Java多线程实现方式
 
-[Java](http://lib.csdn.net/base/javaee)多线程实现方式主要有四种：继承Thread类、实现Runnable接口、实现Callable接口通过FutureTask包装器来创建Thread线程、使用ExecutorService、Callable、Future实现有返回结果的多线程。
+Java多线程实现方式主要有四种：继承Thread类、实现Runnable接口、实现Callable接口通过FutureTask包装器来创建Thread线程、使用ExecutorService、Callable、Future实现有返回结果的多线程。
 
 其中前两种方式线程执行完后都没有返回值，后两种是带返回值的。
 
