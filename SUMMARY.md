@@ -9,5 +9,5 @@
 
 ## java知识
 
-* [thread](java-zhi-shi/thread.md)
+* [thread](java/thread.md)
 
