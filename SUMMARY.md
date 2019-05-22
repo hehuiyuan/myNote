@@ -12,3 +12,7 @@
 * [thread](java/thread.md)
 * [最大堆](java/maxheap.md)
 
+## spark
+
+* [checkpoint理解](spark/checkpoint-li-jie.md)
+

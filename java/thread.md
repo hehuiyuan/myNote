@@ -180,5 +180,23 @@ public Object call() throws Exception {
 4. public static ScheduledExecutorService newScheduledThreadPool\(int corePoolSize\)   
 创建一个支持定时及周期性的任务执行的线程池，多数情况下可用来替代Timer类。  
 5. etc  
-ExecutoreService提供了submit\(\)方法，传递一个Callable，或Runnable，返回Future。如果Executor后台线程池还没有完成Callable的计算，这调用返回Future对象的get\(\)方法，会阻塞直到计算完成。
+ExecutoreService提供了submit\(\)方法，传递一个Callable，或Runnable，返回Future。submit有多种实现，如果参数是Callable类型具有对应的具体返回值；如果参数是Runnable那么返回值具体类型是Void；如果参数是Runnable和result两个参数那么返回的具体值类型是result参数的类型。如果Executor后台线程池还没有完成Callable的计算，此时调用返回Future对象的get\(\)方法，会阻塞直到计算完成。  
+Executors创建每个线程池时，使用了线程池工厂类如ThreadPoolExecutor /ScheduledThreadPoolExecutor 等。  
+            - corePoolSize：线程池中保留的线程个数，即使是空闲状态  
+            - maximumPoolSize：线程池最大的线程数量  
+            - keepAliveTime：线程空闲的时间超过这个值将会被回收  
+            - workQueue：使用的具体阻塞队列  
+            - threadFactory：使用的线程池工厂
+
+```java
+public ThreadPoolExecutor(int corePoolSize,
+                          int maximumPoolSize,
+                          long keepAliveTime,
+                          TimeUnit unit,
+                          BlockingQueue<Runnable> workQueue,
+                          ThreadFactory threadFactory,
+                          RejectedExecutionHandler handler) 
+```
+
+         
 
