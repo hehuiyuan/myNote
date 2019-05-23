@@ -1,5 +1,16 @@
 # checkpoint理解
 
+## checkpoint保存了什么？
+
+1: metadata checkpoint:  
+     这个元数据信息主要是用于故障恢复的大概包含一下几类信息  
+     （1）Configuration:应用使用的配置信息；  
+     （2）Dstream operations:数据流操作，其实就是我们代码执行逻辑；  
+     （3）incomplete batches:任务停止时候可能存在queued情况，那么这些数据是没有被处理的，当程序再次启动时候，是需要重新处理的。  
+  
+2:data checkpoint  
+    保存rdd到checkpoint文件，有状态操作往往需要结合多个批次的数据，那么当使用有状态操作时候checkponit是有必要开启的，一个rdd依赖另一个rdd或者多个rdd，一直依赖下去容易造成比较长的依赖链，避免无边界的增加，可以对有状态的操作的rdd的中间结果周期性的checkpointed，去切断这个血缘。
+
 ## checkpoint目录结构图
 
 checkpoint路径：hdfs://myhdfs/user/spark/checkpoint/jrcOneMinRegBak190522001
