@@ -11,6 +11,19 @@
 2:data checkpoint  
     保存rdd到checkpoint文件，有状态操作往往需要结合多个批次的数据，那么当使用有状态操作时候checkponit是有必要开启的，一个rdd依赖另一个rdd或者多个rdd，一直依赖下去容易造成比较长的依赖链，避免无边界的增加，可以对有状态的操作的rdd的中间结果周期性的checkpointed，去切断这个血缘。
 
+针对spark streaming介绍checkpoint保存了什么？
+
+比如checkpoint会把Checkpoint对象保存到checkpoint-xxxx文件中；
+
+目录保存内容解释：  
+比如会把rdd中的数据保存到指定的checkpoint目录下的一个8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c这样构成的目录下，然后按照rddid进行下一级别的目录创建，然后rddid下面对应的是按照分区写进去的数据，一个分区对应一个文件；  
+  
+比如开启wal会把receiver接受到的数据保存到checkpoint目录下的receivedData中，基于60s一个文件的分割方式写入数据；receivedBlockMetaadata用来保存生成的block信息的元数据。
+
+### 记录receiver block信息的元数据文件 receivedBlockMetadata文件，也是在checkpoint的目录下。
+
+作者：Vip\_He 来源：CSDN 原文：[https://blog.csdn.net/u011707542/article/details/90481278](https://blog.csdn.net/u011707542/article/details/90481278) 版权声明：本文为博主原创文章，转载请附上博文链接！
+
 ## checkpoint目录结构图
 
 checkpoint路径：hdfs://myhdfs/user/spark/checkpoint/jrcOneMinRegBak190522001
