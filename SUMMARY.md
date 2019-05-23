@@ -14,5 +14,5 @@
 
 ## spark
 
-* [checkpoint理解](spark/checkpoint-li-jie.md)
+* [checkpoint理解](spark/checkpoint-understand.md)
 
