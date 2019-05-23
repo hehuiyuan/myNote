@@ -19,10 +19,10 @@ checkpoint路径：hdfs://myhdfs/user/spark/checkpoint/jrcOneMinRegBak190522001
 
 上面显示的是我们指定的checkpoint目录下的目录结构图，  
 其中checkpoint-xxx存放的是metadata数据，主要针对的是Checkpoint序列化后的内容；  
-receivedData /receivedBlockMetadata是receiver时候使用到的；  
+receivedData /receivedBlockMetadata是receiver时候使用到的存放block的元数据信息；  
 8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c里面存放的是rdd数据。
 
-/user/spark/checkpoint/jrcOneMinRegBak190522001/receivedData    目录存放的是receiver接收的数据
+/user/spark/checkpoint/jrcOneMinRegBak190522001/receivedData    目录存放的是receiver接收的数据，下一级目录0 ，1分别代表dstreamid，一般一个dstream创建一个receiver，这里是创建了两个dstream流
 
 ![](../.gitbook/assets/image%20%283%29.png)
 
