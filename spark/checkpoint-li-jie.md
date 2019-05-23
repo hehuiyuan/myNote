@@ -6,11 +6,16 @@ checkpoint路径：hdfs://myhdfs/user/spark/checkpoint/jrcOneMinRegBak190522001
 
 ![](../.gitbook/assets/image%20%285%29.png)
 
+上面显示的是我们指定的checkpoint目录下的目录结构图，  
+其中checkpoint-xxx存放的是metadata数据，主要针对的是Checkpoint序列化后的内容；  
+receivedData /receivedBlockMetadata是receiver时候使用到的；  
+8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c里面存放的是rdd数据。
+
 /user/spark/checkpoint/jrcOneMinRegBak190522001/receivedData    目录存放的是receiver接收的数据
 
 ![](../.gitbook/assets/image%20%283%29.png)
 
-目录存放的是rdd  
+目录存放的是rdd数据  
 /user/spark/checkpoint/jrcOneMinRegBak190522001/8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c  
   
 \_partitioner中存放的是使用的分区类：如 org.apache.spark.HashPartitioner  
@@ -111,7 +116,9 @@ private def startFirstTime() {
   private def doCheckpoint(time: Time, clearCheckpointDataLater: Boolean) {
     if (shouldCheckpoint && (time - graph.zeroTime).isMultipleOf(ssc.checkpointDuration)) {
       logInfo("Checkpointing graph for time " + time)
+      //对rdd做checkpioint，文件在checkpoin目录下一个字符串构成的目录下存放，格式是rdd-xxx
       ssc.graph.updateCheckpointData(time)
+      //对metadata做checkpoint,文件是checkpoin目录下chekpoint-时间戳的文件
       checkpointWriter.write(new Checkpoint(ssc, time), clearCheckpointDataLater)
     } else if (clearCheckpointDataLater) {
       markBatchFullyProcessed(time)
@@ -154,6 +161,296 @@ private def startFirstTime() {
   def checkpointBackupFile(checkpointDir: String, checkpointTime: Time): Path = {
     new Path(checkpointDir, PREFIX + checkpointTime.milliseconds + ".bk")
   }
+
+  
+  
+```
+
+## 8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c存放rdd的目录
+
+![](../.gitbook/assets/image%20%288%29.png)
+
+继续回到doCheckpoint方法，在写元数据之前有一个更新数据的操作
+
+```scala
+ssc.graph.updateCheckpointData(time)
+
+def updateCheckpointData(time: Time) {
+    logInfo("Updating checkpoint data for time " + time)
+    this.synchronized {
+      //dstreamgraph中记录了所有的dstream
+      outputStreams.foreach(_.updateCheckpointData(time))
+    }
+    logInfo("Updated checkpoint data for time " + time)
+}
+
+  private[streaming] def updateCheckpointData(currentTime: Time) {
+    logDebug(s"Updating checkpoint data for time $currentTime")
+    //对rdd数据做checkpoint
+    checkpointData.update(currentTime)
+    //更新依赖的dstream中的rdd数据到checkpoint
+    dependencies.foreach(_.upda
+    teCheckpointData(currentTime))
+    logDebug(s"Updated checkpoint data for time $currentTime: $checkpointData")
+  }
+  
+  
+   //DStreamCheckpointData
+   def update(time: Time) {
+    // Get the checkpointed RDDs from the generated RDDs
+    val checkpointFiles = dstream.generatedRDDs.filter(_._2.getCheckpointFile.isDefined)
+                                       .map(x => (x._1, x._2.getCheckpointFile.get))
+    logDebug("Current checkpoint files:\n" + checkpointFiles.toSeq.mkString("\n"))
+
+    // Add the checkpoint files to the data to be serialized
+    if (!checkpointFiles.isEmpty) {
+      currentCheckpointFiles.clear()
+      currentCheckpointFiles ++= checkpointFiles
+      // Add the current checkpoint files to the map of all checkpoint files
+      // This will be used to delete old checkpoint files
+      timeToCheckpointFile ++= currentCheckpointFiles
+      // Remember the time of the oldest checkpoint RDD in current state
+      timeToOldestCheckpointFileTime(time) = currentCheckpointFiles.keys.min(Time.ordering)
+    }
+  }
+  
+  
+    //使用ReliableRDDCheckpointData得到这个rdd要关联的checkpoint文件
+    def getCheckpointFile: Option[String] = {
+    checkpointData match {
+      case Some(reliable: ReliableRDDCheckpointData[T]) => reliable.getCheckpointDir
+      case _ => None
+    }
+  }  
+  
+  //根据这个rdd是的状态是否是checkpointed决定返回路径的值
+  def getCheckpointDir: Option[String] = RDDCheckpointData.synchronized {
+    if (isCheckpointed) {
+      Some(cpDir.toString)
+    } else {
+      None
+    }
+  }
+  
+   //这个rdd的checkpoint状态值
+  private[spark] object CheckpointState extends Enumeration {
+  type CheckpointState = Value
+  val Initialized, CheckpointingInProgress, Checkpointed = Value
+}
+   protected var cpState = Initialized
+   def isCheckpointed: Boolean = RDDCheckpointData.synchronized {
+    //Checkpointed时候才返回相应的rdd关联路径
+    cpState == Checkpointed
+  }
+  
+  //获取这个rdd对应的保存路径
+  private val cpDir: String =
+    //根rdd的id获取当作这个rdd存储关联目录
+    ReliableRDDCheckpointData.checkpointPath(rdd.context, rdd.id)
+      .map(_.toString)
+      .getOrElse { throw new SparkException("Checkpoint dir must be specified.") }
+      
+  //获得 rdd-rddid 构成这个rdd关联的存储目录组成的字符串
+  def checkpointPath(sc: SparkContext, rddId: Int): Option[Path] = {
+    sc.checkpointDir.map { dir => new Path(dir, s"rdd-$rddId") }
+  }
+  
+  //rdd关联的checkpoint状态改变是rdd调用doCheckpoint方法时候
+  private[spark] def doCheckpoint(): Unit = {
+    RDDOperationScope.withScope(sc, "checkpoint", allowNesting = false, ignoreParent = true) {
+      if (!doCheckpointCalled) {
+        doCheckpointCalled = true
+        if (checkpointData.isDefined) {
+          if (checkpointAllMarkedAncestors) {
+            // TODO We can collect all the RDDs that needs to be checkpointed, and then checkpoint
+            // them in parallel.
+            // Checkpoint parents first because our lineage will be truncated after we
+            // checkpoint ourselves
+            dependencies.foreach(_.rdd.doCheckpoint())
+          }
+          //每个rdd都有一个RDDCheckpointData对象
+          checkpointData.get.checkpoint()
+        } else {
+          dependencies.foreach(_.rdd.doCheckpoint())
+        }
+      }
+    }
+  }
+  
+  //RDDCheckpointData中
+  //checkpoint状态的改变是在RDDCheckpointData.checkpoint时候改变的
+  //LocalRDDCheckpointData存储数据到每个executor缓存层或者本地磁盘
+  //ReliableRDDCheckpointData存储数据到可靠的容错的存储系统中，比如hdfs
+   final def checkpoint(): Unit = {
+    // Guard against multiple threads checkpointing the same RDD by
+    // atomically flipping the state of this RDDCheckpointData
+    RDDCheckpointData.synchronized {
+      if (cpState == Initialized) {
+        cpState = CheckpointingInProgress
+      } else {
+        return
+      }
+    }
+    //对rdd做checkpoint
+    val newRDD = doCheckpoint()
+    // Update our state and truncate the RDD lineage
+    RDDCheckpointData.synchronized {
+      cpRDD = Some(newRDD)
+      cpState = Checkpointed
+      rdd.markCheckpointed()
+    }
+  }
+  
+  
+  protected override def doCheckpoint(): CheckpointRDD[T] = {
+   //往rdd-rddid构成的目录下保存rdd
+    val newRDD = ReliableCheckpointRDD.writeRDDToCheckpointDirectory(rdd, cpDir)
+
+    // Optionally clean our checkpoint files if the reference is out of scope
+    if (rdd.conf.getBoolean("spark.cleaner.referenceTracking.cleanCheckpoints", false)) {
+      rdd.context.cleaner.foreach { cleaner =>
+        cleaner.registerRDDCheckpointDataForCleanup(newRDD, rdd.id)
+      }
+    }
+
+    logInfo(s"Done checkpointing RDD ${rdd.id} to $cpDir, new parent is RDD ${newRDD.id}")
+    newRDD
+  }
+  
+  
+ //写rdd到 rdd-rddid构成的目录下 对应的part-xxxxx文件中
+ def writeRDDToCheckpointDirectory[T: ClassTag](
+      originalRDD: RDD[T],
+      checkpointDir: String,
+      blockSize: Int = -1): ReliableCheckpointRDD[T] = {
+    val checkpointStartTimeNs = System.nanoTime()
+
+    val sc = originalRDD.sparkContext
+
+    // Create the output path for the checkpoint
+    val checkpointDirPath = new Path(checkpointDir)
+    val fs = checkpointDirPath.getFileSystem(sc.hadoopConfiguration)
+    if (!fs.mkdirs(checkpointDirPath)) {
+      throw new SparkException(s"Failed to create checkpoint path $checkpointDirPath")
+    }
+
+    // Save to file, and reload it as an RDD
+    val broadcastedConf = sc.broadcast(
+      new SerializableConfiguration(sc.hadoopConfiguration))
+    // TODO: This is expensive because it computes the RDD again unnecessarily (SPARK-8582)
+    //写rdd到相应的checkpoint中，后面进一步详细分析
+    sc.runJob(originalRDD,
+      writePartitionToCheckpointFile[T](checkpointDirPath.toString, broadcastedConf) _)
+
+    //将使用的分区类写到rdd-rddid构成的目录下的_partitioner文件中
+    if (originalRDD.partitioner.nonEmpty) {
+      writePartitionerToCheckpointDir(sc, originalRDD.partitioner.get, checkpointDirPath)
+    }
+
+    val checkpointDurationMs =
+      TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - checkpointStartTimeNs)
+    logInfo(s"Checkpointing took $checkpointDurationMs ms.")
+
+    val newRDD = new ReliableCheckpointRDD[T](
+      sc, checkpointDirPath.toString, originalRDD.partitioner)
+    if (newRDD.partitions.length != originalRDD.partitions.length) {
+      throw new SparkException(
+        "Checkpoint RDD has a different number of partitions from original RDD. Original " +
+          s"RDD [ID: ${originalRDD.id}, num of partitions: ${originalRDD.partitions.length}]; " +
+          s"Checkpoint RDD [ID: ${newRDD.id}, num of partitions: " +
+          s"${newRDD.partitions.length}].")
+    }
+    newRDD
+  }
+  
+  
+  //将使用的分区器写到_partitoner文件中
+   private def writePartitionerToCheckpointDir(
+    sc: SparkContext, partitioner: Partitioner, checkpointDirPath: Path): Unit = {
+    try {
+      //checkpointPartitionerFileName = "_partitioner"
+      val partitionerFilePath = new Path(checkpointDirPath, checkpointPartitionerFileName)
+      val bufferSize = sc.conf.getInt("spark.buffer.size", 65536)
+      val fs = partitionerFilePath.getFileSystem(sc.hadoopConfiguration)
+      val fileOutputStream = fs.create(partitionerFilePath, false, bufferSize)
+      val serializer = SparkEnv.get.serializer.newInstance()
+      val serializeStream = serializer.serializeStream(fileOutputStream)
+      Utils.tryWithSafeFinally {
+        //将使用的partitioner序列化后写到文件"_partitioner"中保存
+        serializeStream.writeObject(partitioner)
+      } {
+        serializeStream.close()
+      }
+      logDebug(s"Written partitioner to $partitionerFilePath")
+    } catch {
+      case NonFatal(e) =>
+        logWarning(s"Error writing partitioner $partitioner to $checkpointDirPath")
+    }
+  }
+  
+  //进一步分析将rdd写到checkpoint中，writeRDDToCheckpointDirectory方法中关键代码如下
+  sc.runJob(originalRDD,
+      writePartitionToCheckpointFile[T](checkpointDirPath.toString, broadcastedConf) _)
+  
+  //上面的代码就是写rdd分区数据到checkpoint file中的调用地方
+  /**
+   * Write an RDD partition's data to a checkpoint file.
+   */
+  def writePartitionToCheckpointFile[T: ClassTag](
+      path: String,
+      broadcastedConf: Broadcast[SerializableConfiguration],
+      blockSize: Int = -1)(ctx: TaskContext, iterator: Iterator[T]) {
+    val env = SparkEnv.get
+    val outputDir = new Path(path)
+    val fs = outputDir.getFileSystem(broadcastedConf.value.value)
+    //finalOutputName就是part-xxxxx 分区id, 五位数字构成
+    val finalOutputName = ReliableCheckpointRDD.checkpointFileName(ctx.partitionId())
+    val finalOutputPath = new Path(outputDir, finalOutputName)
+    //先写到临时文件，最后重命名
+    val tempOutputPath =
+      new Path(outputDir, s".$finalOutputName-attempt-${ctx.attemptNumber()}")
+
+    val bufferSize = env.conf.getInt("spark.buffer.size", 65536)
+
+    val fileOutputStream = if (blockSize < 0) {
+      val fileStream = fs.create(tempOutputPath, false, bufferSize)
+      if (env.conf.get(CHECKPOINT_COMPRESS)) {
+        CompressionCodec.createCodec(env.conf).compressedOutputStream(fileStream)
+      } else {
+        fileStream
+      }
+    } else {
+      // This is mainly for testing purpose
+      fs.create(tempOutputPath, false, bufferSize,
+        fs.getDefaultReplication(fs.getWorkingDirectory), blockSize)
+    }
+    val serializer = env.serializer.newInstance()
+    val serializeStream = serializer.serializeStream(fileOutputStream)
+    Utils.tryWithSafeFinally {
+      serializeStream.writeAll(iterator)
+    } {
+      serializeStream.close()
+    }
+   //重命名文件part-xxxxx-attempt-attemptNumber --->part-xxxxx
+    if (!fs.rename(tempOutputPath, finalOutputPath)) {
+      if (!fs.exists(finalOutputPath)) {
+        logInfo(s"Deleting tempOutputPath $tempOutputPath")
+        fs.delete(tempOutputPath, false)
+        throw new IOException("Checkpoint failed: failed to save output of task: " +
+          s"${ctx.attemptNumber()} and final output path does not exist: $finalOutputPath")
+      } else {
+      //重命名失败因为该文件已经存在，那么删除临时文件
+        // Some other copy of this task must've finished before us and renamed it
+        logInfo(s"Final output path $finalOutputPath already exists; not overwriting it")
+        if (!fs.delete(tempOutputPath, false)) {
+          logWarning(s"Error deleting ${tempOutputPath}")
+        }
+      }
+    }
+  }        
+
+
+
 
   
   
@@ -225,7 +522,7 @@ def storeBlock(blockId: StreamBlockId, block: ReceivedBlock): ReceivedBlockStore
 
 这里面写入的是内容是 BlockAdditionEvent\(receivedBlockInfo\)  序列化后的内容，ReceiverTrackerEndpoint接收到AddBlock事件时候触发
 
-```text
+```scala
 //ReceiverTrackerEndpoint中，ReceiverTrackerEndpoint是ReceiverTracker中定义的类
 case AddBlock(receivedBlockInfo) =>
   if (WriteAheadLogUtils.isBatchingEnabled(ssc.conf, isDriver = true)) {
@@ -315,6 +612,7 @@ case AddBlock(receivedBlockInfo) =>
   val newLogPath = new Path(logDirectory,
         timeToLogFile(currentLogWriterStartTime, currentLogWriterStopTime))
         
+  //这个就是对应的wal写的log文件的名字的构成
   def timeToLogFile(startTime: Long, stopTime: Long): String = {
     s"log-$startTime-$stopTime"
   }
