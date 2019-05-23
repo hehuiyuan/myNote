@@ -18,11 +18,7 @@
 目录保存内容解释：  
 比如会把rdd中的数据保存到指定的checkpoint目录下的一个8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c这样构成的目录下，然后按照rddid进行下一级别的目录创建，然后rddid下面对应的是按照分区写进去的数据，一个分区对应一个文件；  
   
-比如开启wal会把receiver接受到的数据保存到checkpoint目录下的receivedData中，基于60s一个文件的分割方式写入数据；receivedBlockMetaadata用来保存生成的block信息的元数据。
-
-### 记录receiver block信息的元数据文件 receivedBlockMetadata文件，也是在checkpoint的目录下。
-
-作者：Vip\_He 来源：CSDN 原文：[https://blog.csdn.net/u011707542/article/details/90481278](https://blog.csdn.net/u011707542/article/details/90481278) 版权声明：本文为博主原创文章，转载请附上博文链接！
+比如开启wal会把receiver接受到的数据保存到checkpoint目录下的receivedData中，基于60s一个文件的分割方式写入数据；receivedBlockMetaadata用来保存生成的block信息的元数据，记录receiver block信息的元数据文件 receivedBlockMetadata文件，也是在checkpoint的目录下。
 
 ## checkpoint目录结构图
 
@@ -202,7 +198,7 @@ ssc.graph.updateCheckpointData(time)
 def updateCheckpointData(time: Time) {
     logInfo("Updating checkpoint data for time " + time)
     this.synchronized {
-      //dstreamgraph中记录了所有的dstream
+      //dstreamgraph中记录了所有的dstream,分别 调用updateChecpointData方法
       outputStreams.foreach(_.updateCheckpointData(time))
     }
     logInfo("Updated checkpoint data for time " + time)
@@ -210,11 +206,12 @@ def updateCheckpointData(time: Time) {
 
   private[streaming] def updateCheckpointData(currentTime: Time) {
     logDebug(s"Updating checkpoint data for time $currentTime")
-    //对rdd数据做checkpoint
+    //对rdd数据做checkpoint，checkpointData：DStreamCheckpointData
+    //每个dstream都有DStreamCheckpointData的这么一个对象，
+    //针对不同的dsteam可以自定义这个类，只需要继承DStreamCheckpointData即可，重写update
     checkpointData.update(currentTime)
     //更新依赖的dstream中的rdd数据到checkpoint
-    dependencies.foreach(_.upda
-    teCheckpointData(currentTime))
+    dependencies.foreach(_.updateCheckpointData(currentTime))
     logDebug(s"Updated checkpoint data for time $currentTime: $checkpointData")
   }
   
