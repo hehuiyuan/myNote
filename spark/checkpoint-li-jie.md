@@ -4,11 +4,11 @@
 
 checkpoint路径：hdfs://myhdfs/user/spark/checkpoint/jrcOneMinRegBak190522001
 
-![](../.gitbook/assets/image%20%284%29.png)
+![](../.gitbook/assets/image%20%285%29.png)
 
 /user/spark/checkpoint/jrcOneMinRegBak190522001/receivedData    目录存放的是receiver接收的数据
 
-![](../.gitbook/assets/image%20%282%29.png)
+![](../.gitbook/assets/image%20%283%29.png)
 
 目录存放的是rdd  
 /user/spark/checkpoint/jrcOneMinRegBak190522001/8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c  
@@ -18,9 +18,9 @@ checkpoint路径：hdfs://myhdfs/user/spark/checkpoint/jrcOneMinRegBak190522001
 part-xxxx里面涉及到了org.apache.spark.streaming.rdd.MapWithStateRDDRecored  
 org.apache.spark.streaming.util.OpenHashMapBasedStateMap
 
-![](../.gitbook/assets/image%20%285%29.png)
+![](../.gitbook/assets/image%20%286%29.png)
 
-![](../.gitbook/assets/image%20%287%29.png)
+![](../.gitbook/assets/image%20%288%29.png)
 
 ## checkpoint-xxxx文件的创建
 
@@ -159,7 +159,7 @@ private def startFirstTime() {
   
 ```
 
-## receiverdata目录的创建这个主要是使用receiver时候
+## receiverData目录的创建这个主要是使用receiver时候
 
 ```scala
 private[streaming] object WriteAheadLogBasedBlockHandler {
@@ -217,5 +217,108 @@ def storeBlock(blockId: StreamBlockId, block: ReceivedBlock): ReceivedBlockStore
   }
 
 
+```
+
+## receivedBlockMetadata也是receiver时候使用
+
+![](../.gitbook/assets/image%20%281%29.png)
+
+这里面写入的是内容是 BlockAdditionEvent\(receivedBlockInfo\)  序列化后的内容，ReceiverTrackerEndpoint接收到AddBlock事件时候触发
+
+```text
+//ReceiverTrackerEndpoint中，ReceiverTrackerEndpoint是ReceiverTracker中定义的类
+case AddBlock(receivedBlockInfo) =>
+  if (WriteAheadLogUtils.isBatchingEnabled(ssc.conf, isDriver = true)) {
+    walBatchingThreadPool.execute(new Runnable {
+      override def run(): Unit = Utils.tryLogNonFatalError {
+        if (active) {
+          context.reply(addBlock(receivedBlockInfo))
+        } else {
+          throw new IllegalStateException("ReceiverTracker RpcEndpoint shut down.")
+        }
+      }
+    })
+  } else {
+    context.reply(addBlock(receivedBlockInfo))
+  }
+  
+  
+  //ReceiverTracker中的方法
+  private def addBlock(receivedBlockInfo: ReceivedBlockInfo): Boolean = {
+    receivedBlockTracker.addBlock(receivedBlockInfo)
+  }
+  
+  
+  
+  
+   //ReceivedBlockTracker中方法
+   /** Add received block. This event will get written to the write ahead log (if enabled). */
+  def addBlock(receivedBlockInfo: ReceivedBlockInfo): Boolean = {
+    try {
+      //要往receivermetadata目录下写的内容
+      val writeResult = writeToLog(BlockAdditionEvent(receivedBlockInfo))
+      if (writeResult) {
+        synchronized {
+          getReceivedBlockQueue(receivedBlockInfo.streamId) += receivedBlockInfo
+        }
+        logDebug(s"Stream ${receivedBlockInfo.streamId} received " +
+          s"block ${receivedBlockInfo.blockStoreResult.blockId}")
+      } else {
+        logDebug(s"Failed to acknowledge stream ${receivedBlockInfo.streamId} receiving " +
+          s"block ${receivedBlockInfo.blockStoreResult.blockId} in the Write Ahead Log.")
+      }
+      writeResult
+    } catch {
+      case NonFatal(e) =>
+        logError(s"Error adding block $receivedBlockInfo", e)
+        false
+    }
+  }
+  
+  
+  
+  /** Write an update to the tracker to the write ahead log */
+  private[streaming] def writeToLog(record: ReceivedBlockTrackerLogEvent): Boolean = {
+    //wal可用时候
+    if (isWriteAheadLogEnabled) {
+      logTrace(s"Writing record: $record")
+      try {
+      //使用创建好的wal实现类去写，isWriteAheadLogEnabled使用时候初始化writeAheadLogOption
+        writeAheadLogOption.get.write(ByteBuffer.wrap(Utils.serialize(record)),
+          clock.getTimeMillis())
+        true
+      } catch {
+        case NonFatal(e) =>
+          logWarning(s"Exception thrown while writing record: $record to the WriteAheadLog.", e)
+          false
+      }
+    } else {
+      true
+    }
+  }
+  
+  //如何判断能否执行wal操作呢？
+  private[streaming] def isWriteAheadLogEnabled: Boolean = writeAheadLogOption.nonEmpty
+  private val writeAheadLogOption = createWriteAheadLog()
+  private def createWriteAheadLog(): Option[WriteAheadLog] = {
+    checkpointDirOption.map { checkpointDir =>
+      val logDir = ReceivedBlockTracker.checkpointDirToLogDir(checkpointDirOption.get)
+      //默认创建的WriteAheadLog实现类是FileBasedWriteAheadLog
+      WriteAheadLogUtils.createLogForDriver(conf, logDir, hadoopConf)
+    }
+  }
+  
+  //FileBasedWriteAheadLog就会在该目录下创建相应文件例如在receiverBlockMetedata下创建如下格式文件：
+  //rollingIntervalSecs wal日志文件分割间隔默认60s
+  currentLogWriterStartTime = currentTime
+  currentLogWriterStopTime = currentTime + (rollingIntervalSecs * 1000)
+  val newLogPath = new Path(logDirectory,
+        timeToLogFile(currentLogWriterStartTime, currentLogWriterStopTime))
+        
+  def timeToLogFile(startTime: Long, stopTime: Long): String = {
+    s"log-$startTime-$stopTime"
+  }
+
+  
 ```
 
