@@ -311,11 +311,14 @@ def updateCheckpointData(time: Time) {
   
   
   
-  //rdd关联的checkpoint状态改变是rdd调用doCheckpoint方法时候
+  //rdd关联的checkpoint状态改变是rdd调用doCheckpoint方法时候,那么什么时候调用doCheckpoint呢？
   private[spark] def doCheckpoint(): Unit = {
     RDDOperationScope.withScope(sc, "checkpoint", allowNesting = false, ignoreParent = true) {
+      //doCheckpointCalled用来避免多次checkpoint
       if (!doCheckpointCalled) {
         doCheckpointCalled = true
+        //rdd.checkpoint中判断checkpoint目录是否存在
+        //如果存在那么初始化checkpointData，这个rdd需要做checkpoint
         if (checkpointData.isDefined) {
           if (checkpointAllMarkedAncestors) {
             // TODO We can collect all the RDDs that needs to be checkpointed, and then checkpoint
@@ -324,9 +327,10 @@ def updateCheckpointData(time: Time) {
             // checkpoint ourselves
             dependencies.foreach(_.rdd.doCheckpoint())
           }
-          //每个rdd都有一个RDDCheckpointData对象
+        //每个rdd都有一个RDDCheckpointData对象
           checkpointData.get.checkpoint()
         } else {
+        //递归调用其依赖的rdd
           dependencies.foreach(_.rdd.doCheckpoint())
         }
       }
@@ -503,7 +507,29 @@ def updateCheckpointData(time: Time) {
         }
       }
     }
-  }        
+  }  
+  
+        
+              
+ //最后回答你什么时候调用rdd的doCheckpoint方法，sc.runJob时候调用
+   def runJob[T, U: ClassTag](
+      rdd: RDD[T],
+      func: (TaskContext, Iterator[T]) => U,
+      partitions: Seq[Int],
+      resultHandler: (Int, U) => Unit): Unit = {
+    if (stopped.get()) {
+      throw new IllegalStateException("SparkContext has been shutdown")
+    }
+    val callSite = getCallSite
+    val cleanedFunc = clean(func)
+    logInfo("Starting job: " + callSite.shortForm)
+    if (conf.getBoolean("spark.logLineage", false)) {
+      logInfo("RDD's recursive dependencies:\n" + rdd.toDebugString)
+    }
+    dagScheduler.runJob(rdd, cleanedFunc, partitions, callSite, resultHandler, localProperties.get)
+    progressBar.foreach(_.finishAll())
+    rdd.doCheckpoint()
+  }      
 
 
 
