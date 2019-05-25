@@ -86,7 +86,7 @@ org.apache.spark.streaming.util.OpenHashMapBasedStateMap
   
   
   
-  -------触发GeneratorJobs事件，定时任务
+  -------定时任务，触发GeneratorJobs事件，然后调用generateJobs方法
     private val timer = new RecurringTimer(clock, ssc.graph.batchDuration.milliseconds,
     longTime => eventLoop.post(GenerateJobs(new Time(longTime))), "JobGenerator")
 
@@ -94,11 +94,14 @@ org.apache.spark.streaming.util.OpenHashMapBasedStateMap
 
 ```scala
 
+//上面定时任务怎么触发的呢？Jobscheduler.start时候会调用JobGenerator.start方法，如下
 def start(): Unit = synchronized {
     if (eventLoop != null) return // generator has already been started
 
     // Call checkpointWriter here to initialize it before eventLoop uses it to avoid a deadlock.
     // See SPARK-10125
+    //ssc.checkpointDuration != null && ssc.checkpointDir != null为true,
+    //那么初始化CheckpointWriter,否则为null
     checkpointWriter
 
     eventLoop = new EventLoop[JobGeneratorEvent]("JobGenerator") {
@@ -111,9 +114,10 @@ def start(): Unit = synchronized {
     eventLoop.start()
 
     if (ssc.isCheckpointPresent) {
-    //checkpoint不为null的话那么从checkpoint恢复
+    //Checkpoint对象不为null的话那么从checkpoint恢复
       restart()
     } else {
+     //Checkpoint对象为null，那么执行这里
       startFirstTime()
     }
   }
@@ -121,16 +125,17 @@ def start(): Unit = synchronized {
   
 private def startFirstTime() {
     val startTime = new Time(timer.getStartTime())
+    //调用DStreamGraph的start方法，里面调用了inputstream.start等操作
     graph.start(startTime - graph.batchDuration)
-    //开始定时任务
+    //在这里开始了Spark streaming的的定时任务,触发GenerateJobs事件
     timer.start(startTime.milliseconds)
     logInfo("Started JobGenerator at " + startTime)
   }
-  
-  
+
 ```
 
-上面描述了JobGenerator.start方法到docheckpoint的一个过程，那么继续回来看我们的doCheckpoint
+上面描述了  
+JobScheduler.start--&gt; JobGenerator.start--&gt;JobGenerator.startFirstTime--&gt;RecurringtTimer.start--&gt;GeneratorJob事件--&gt;JobGenerator.generatorJobs一个过程，generatorJobs方法最后一行代码触发了DoCheckpoint事件，那么继续回来看我们的相应的doCheckpoint方法
 
 ```scala
   private def doCheckpoint(time: Time, clearCheckpointDataLater: Boolean) {
@@ -145,7 +150,7 @@ private def startFirstTime() {
     }
   }
   
-  //checkpointwriter对象
+  //checkpointwriter对象,此处的checkpoint目录是我们自定义的checkpoint目录一级
    private lazy val checkpointWriter = if (shouldCheckpoint) {
     new CheckpointWriter(this, ssc.conf, ssc.checkpointDir, ssc.sparkContext.hadoopConfiguration)
   } else {
@@ -158,6 +163,7 @@ private def startFirstTime() {
    def write(checkpoint: Checkpoint, clearCheckpointDataLater: Boolean) {
     try {
       val bytes = Checkpoint.serialize(checkpoint, conf)
+      //只有一个线程去执行CheckpointWriteHandler写元数据到checkpoint-xxx文件
       executor.execute(new CheckpointWriteHandler(
         checkpoint.checkpointTime, bytes, clearCheckpointDataLater))
       logInfo(s"Submitted checkpoint of time ${checkpoint.checkpointTime} to writer queue")
