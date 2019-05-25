@@ -35,7 +35,7 @@ receivedData /receivedBlockMetadata是receiver时候使用到的存放block的�
 
 ![](../.gitbook/assets/image%20%283%29.png)
 
-目录存放的是rdd数据  
+设置的checkpoint路径下面创建了UUID的一个目录，下面存放的是rdd数据  
 /user/spark/checkpoint/jrcOneMinRegBak190522001/8293fb52-d0de-4ba8-b6f1-8ed4a7771e1c  
   
 \_partitioner中存放的是使用的分区类：如 org.apache.spark.HashPartitioner  
@@ -271,10 +271,39 @@ def updateCheckpointData(time: Time) {
       .map(_.toString)
       .getOrElse { throw new SparkException("Checkpoint dir must be specified.") }
       
+      
   //获得 rdd-rddid 构成这个rdd关联的存储目录组成的字符串
   def checkpointPath(sc: SparkContext, rddId: Int): Option[Path] = {
+    //此处checkpointDir的值是我们设置的checkpoint目录然后下面新建一个一层uuid生成值的目录，
+    //然后在这个uuid值目录下创建rdd-xxxxx的目录
     sc.checkpointDir.map { dir => new Path(dir, s"rdd-$rddId") }
   }
+  
+  
+  //sc.checkpointDir是什么呢？这个sc是sparkcontext ,ssc是streamingcontext
+  //当我们调用streamingcontext.checkpoint方法时候，会调用sc.setCheckpointDir
+  //这里面会初始化checkpointDir变量的值，通过在我们设置的checkpoint目录下新建一个uuid生成的值作为目录名字
+   def setCheckpointDir(directory: String) {
+
+    // If we are running on a cluster, log a warning if the directory is local.
+    // Otherwise, the driver may attempt to reconstruct the checkpointed RDD from
+    // its own local file system, which is incorrect because the checkpoint files
+    // are actually on the executor machines.
+    if (!isLocal && Utils.nonLocalPaths(directory).isEmpty) {
+      logWarning("Spark is not running in local mode, therefore the checkpoint directory " +
+        s"must not be on the local filesystem. Directory '$directory' " +
+        "appears to be on the local filesystem.")
+    }
+
+    checkpointDir = Option(directory).map { dir =>
+      val path = new Path(dir, UUID.randomUUID().toString)
+      val fs = path.getFileSystem(hadoopConfiguration)
+      fs.mkdirs(path)
+      fs.getFileStatus(path).getPath.toString
+    }
+  }
+  
+  
   
   //rdd关联的checkpoint状态改变是rdd调用doCheckpoint方法时候
   private[spark] def doCheckpoint(): Unit = {
